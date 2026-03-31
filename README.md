@@ -1,6 +1,6 @@
 # TcmAiAgent(TCM:Traditional Chinese Medicine)
 
-一个面向中文场景的“中医辨证分析” AI Agent 项目：支持用户输入图片与文字描述，生成辨证报告；并提供微信公众平台 webhook 接入入口。
+一个面向中医场景的“中医辨证分析” AI Agent 项目：支持用户输入图片与文字描述，生成辨证报告；并提供微信公众平台 webhook 接入入口。
 
 ## 目录结构
 
