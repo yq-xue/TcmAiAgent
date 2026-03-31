@@ -47,7 +47,7 @@ async def download_wechat_media(*, access_token: str, media_id: str) -> bytes:
 def parse_wechat_message(xml_body: bytes) -> dict[str, str]:
     root = ET.fromstring(xml_body)
     msg = {}
-    # Common fields:
+    # 常见字段：逐个子节点读取并放入字典。
     for child in root:
         tag = child.tag.split("}")[-1]
         msg[tag] = child.text or ""
@@ -55,7 +55,7 @@ def parse_wechat_message(xml_body: bytes) -> dict[str, str]:
 
 
 def build_text_reply(*, to_user: str, from_user: str, content: str) -> str:
-    # WeChat expects UTF-8 XML; CDATA helps keep text safe.
+    # 微信要求 UTF-8 XML；使用 CDATA 可以更安全地包裹文本内容。
     create_time = int(__import__("time").time())
     xml = f"""<xml>
   <ToUserName><![CDATA[{to_user}]]></ToUserName>
@@ -99,12 +99,12 @@ async def handle_wechat_post(xml_body: bytes) -> WechatReply:
 
         access_token = await fetch_wechat_access_token(appid=appid, secret=secret)
         image_bytes = await download_wechat_media(access_token=access_token, media_id=media_id)
-        # Some image messages may not contain Caption; fall back to Content if present.
+        # 部分图片消息可能没有 Caption 字段，此时回退使用 Content 里的文字说明。
         user_text = msg.get("Caption") or msg.get("Content") or ""
         result = await generate_diagnosis_report(user_text=user_text, image_bytes=image_bytes)
         return WechatReply(xml=build_text_reply(to_user=from_user, from_user=to_user, content=result.report_text))
 
-    # Unsupported message type:
+    # 其他不支持的消息类型统一给出提示。
     result_text = "目前只支持文字与图片消息。请发送文字描述或图片（如舌象/面色等）。"
     return WechatReply(xml=build_text_reply(to_user=from_user, from_user=to_user, content=result_text))
 

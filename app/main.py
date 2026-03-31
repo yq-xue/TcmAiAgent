@@ -9,12 +9,12 @@ from app.wechat import handle_wechat_post, verify_wechat_signature
 from app.tcm_agent import generate_diagnosis_report
 
 try:
-    # Auto-load environment variables from .env when present.
+    # 如存在 .env 文件，则自动加载环境变量。
     from dotenv import load_dotenv
 
     load_dotenv()
 except Exception:
-    # If python-dotenv isn't installed or .env is absent, continue normally.
+    # 即便未安装 python-dotenv 或 .env 不存在，也不影响服务启动。
     pass
 
 app = FastAPI(title="TcmAiAgent", version="0.1.0")
@@ -41,11 +41,11 @@ async def api_diagnose(
 @app.get("/wechat")
 async def wechat_get(request: Request) -> PlainTextResponse:
     """
-    WeChat verification:
-    - signature
-    - timestamp
-    - nonce
-    - echostr
+    微信服务器接入验证（GET）：
+    - signature：签名
+    - timestamp：时间戳
+    - nonce：随机数
+    - echostr：原样返回给微信的校验字符串
     """
     query = dict(request.query_params)
     token = os.getenv("WECHAT_TOKEN", "").strip()

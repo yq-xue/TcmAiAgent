@@ -1,0 +1,16 @@
+# Python 编译缓存
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 虚拟环境
+.venv/
+venv/
+
+# 编辑器/工具
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+

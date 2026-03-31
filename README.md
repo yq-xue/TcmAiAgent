@@ -1,6 +1,6 @@
-# TcmAiAgent(TCM:Traditional Chinese Medicine)
+# TcmAiAgent
 
-一个面向中医场景的“中医辨证分析” AI Agent 项目：支持用户输入图片与文字描述，生成辨证报告；并提供微信公众平台 webhook 接入入口。
+TCM(Traditional Chinese Medicine)是一个面向中医场景的“中医辨证分析” AI Agent 项目：支持用户输入图片与文字描述，生成辨证报告；并提供微信公众平台 webhook 接入入口。
 
 ## 目录结构
 
@@ -43,6 +43,8 @@ curl -X POST "http://localhost:8000/api/diagnose" \
 ## 环境变量（可选：接入 DeepSeek 进行图文分析）
 
 如果未配置 `DEEPSEEK_API_KEY`，系统会降级为“基于文字的规则分析”（不做图片推断）。
+
+说明：当前 LLM 调用已改为使用 LangChain（图片部分通过 `image_url` 发送）。
 
 - `DEEPSEEK_API_URL`：默认 `https://api.deepseek.com/v1/chat/completions`
 - `DEEPSEEK_API_KEY`：DeepSeek 鉴权 key（请在你环境中自行填入）

@@ -4,9 +4,10 @@ import base64
 import os
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Optional
 
-import httpx
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 
 @dataclass
@@ -17,7 +18,7 @@ class TcmDiagnosisResult:
 
 def _strip_yaml_frontmatter(markdown: str) -> str:
     """
-    Remove leading YAML frontmatter block: --- ... ---
+    移除开头的 YAML frontmatter 区块（--- ... ---）
     """
     return re.sub(r"(?s)^---\s*\n.*?\n---\s*\n?", "", markdown, count=1)
 
@@ -40,8 +41,8 @@ def load_skill_prompt(skill_rel_path: str = ".cursor/skills/tcm-diagnosis/SKILL.
 
 def _rule_based_analysis(user_text: str) -> str:
     """
-    Lightweight fallback: only uses user text; does not infer from image.
-    This avoids hard dependency on an LLM.
+    规则版兜底分析：仅基于文字描述，不对图片做推断，
+    避免对大模型依赖过强时服务不可用。
     """
     text = (user_text or "").strip()
     if not text:
@@ -97,7 +98,7 @@ def _rule_based_analysis(user_text: str) -> str:
 
 
 def _format_for_wechat(report_md: str) -> str:
-    # Remove most markdown syntax for message length and readability.
+    # 将 Markdown 报告转换为微信更易读的纯文本格式。
     text = report_md
     text = re.sub(r"#+\s*", "", text)  # headings
     text = re.sub(r"\*\*", "", text)  # bold
@@ -106,54 +107,59 @@ def _format_for_wechat(report_md: str) -> str:
     return text.strip()
 
 
-async def _call_llm_with_vision(
+def _derive_base_url(api_url: str) -> str:
+    """
+    将 OpenAI 兼容的 chat completions 地址转换为 LangChain 可用的基础 base_url。
+
+    例如：
+      https://api.deepseek.com/v1/chat/completions -> https://api.deepseek.com
+    """
+    api_url = (api_url or "").strip().rstrip("/")
+    if not api_url:
+        return api_url
+    if "/v1/" in api_url:
+        return api_url.split("/v1/")[0]
+    if api_url.endswith("/v1"):
+        return api_url[: -len("/v1")]
+    return api_url
+
+
+async def _call_llm_langchain(
     *,
     api_url: str,
     api_key: str,
     model: str,
     system_prompt: str,
     user_text: str,
-    image_bytes: bytes | None,
+    image_bytes: Optional[bytes],
 ) -> str:
-    headers = {"Authorization": f"Bearer {api_key}"}
-    if not image_bytes:
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_text or "（无文字输入）"},
-        ]
-    else:
+    llm = ChatOpenAI(
+        model=model,
+        api_key=api_key,
+        base_url=_derive_base_url(api_url),
+        temperature=0.4,
+    )
+
+    text = user_text or "（无文字输入）"
+    if image_bytes:
         b64 = base64.b64encode(image_bytes).decode("ascii")
-        # Use a generic image MIME type; OpenAI vision accepts common image formats.
         data_url = f"data:image/jpeg;base64,{b64}"
-        content: list[dict[str, Any]] = [
-            {"type": "text", "text": user_text or "（无文字输入）"},
-            {"type": "image_url", "image_url": {"url": data_url}},
-        ]
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": content},
-        ]
+        human = HumanMessage(
+            content=[
+                {"type": "text", "text": text},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ]
+        )
+    else:
+        human = HumanMessage(content=text)
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.4,
-    }
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(api_url, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-
-    # OpenAI-compatible: choices[0].message.content
-    return data["choices"][0]["message"]["content"]
+    resp = await llm.ainvoke([SystemMessage(content=system_prompt), human])
+    return getattr(resp, "content", str(resp))
 
 
 async def generate_diagnosis_report(user_text: str, image_bytes: bytes | None) -> TcmDiagnosisResult:
     system_prompt = load_skill_prompt()
 
-    # Prefer DeepSeek. If token is not configured, fall back to rule-based analysis.
-    # User can leave DEEPSEEK_API_KEY empty (or not set) and we will not call the model.
     api_key = (os.getenv("DEEPSEEK_API_KEY", "") or os.getenv("LLM_API_KEY", "")).strip()
     api_url = (
         os.getenv("DEEPSEEK_API_URL", "") or os.getenv("LLM_API_URL", "") or "https://api.deepseek.com/v1/chat/completions"
@@ -165,9 +171,9 @@ async def generate_diagnosis_report(user_text: str, image_bytes: bytes | None) -
         report_md = _rule_based_analysis(user_text)
         return TcmDiagnosisResult(report_md=report_md, report_text=_format_for_wechat(report_md))
 
-    # Try vision first (when image exists) then gracefully fall back to text-only.
     try:
-        report_md = await _call_llm_with_vision(
+        # When image exists, try a vision-capable model first. If it fails, fall back to text-only.
+        report_md = await _call_llm_langchain(
             api_url=api_url,
             api_key=api_key,
             model=vision_model if image_bytes else model,
@@ -176,14 +182,16 @@ async def generate_diagnosis_report(user_text: str, image_bytes: bytes | None) -
             image_bytes=image_bytes,
         )
     except Exception:
-        # If vision fails (model mismatch / unsupported image), try text-only.
-        report_md = await _call_llm_with_vision(
-            api_url=api_url,
-            api_key=api_key,
-            model=model,
-            system_prompt=system_prompt,
-            user_text=user_text,
-            image_bytes=None,
-        )
+        try:
+            report_md = await _call_llm_langchain(
+                api_url=api_url,
+                api_key=api_key,
+                model=model,
+                system_prompt=system_prompt,
+                user_text=user_text,
+                image_bytes=None,
+            )
+        except Exception:
+            report_md = _rule_based_analysis(user_text)
     return TcmDiagnosisResult(report_md=report_md, report_text=_format_for_wechat(report_md))
 
